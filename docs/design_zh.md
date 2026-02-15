@@ -2,25 +2,7 @@
 
 ## 1. 概述
 
-dbpp (Database++) 是对 [DatabaseLayer](https://gitee.com/liudegui/DatabaseLayer) 的 C++14 现代化重写。原始项目基于 C++03 风格，存在裸 new/delete、全局静态变量、const_cast 模拟移动语义等问题。
-
-dbpp 保留原始项目的核心设计思想（统一 SQLite3/MySQL 操作接口），但以 C++14 标准重新实现，遵循 MISRA C++ 和 Google C++ Style Guide。
-
-## 2. 原始代码问题分析
-
-| 问题 | 位置 | 严重程度 |
-|------|------|----------|
-| 裸 new/delete | CppMySQLException (new std::string), CppMySQLResultSet (new vector), CppMySQLStatement (new vector) | 高 |
-| const_cast 模拟移动语义 | 所有 Query/ResultSet/Statement 的拷贝构造和赋值 | 高 |
-| 全局静态变量 | s_DBName, s_nValue, s_dwValue (CppMySQL.cpp) | 高 (线程不安全) |
-| 宏污染 | `#undef NULL` / `#define NULL 0` | 中 |
-| sprintf 缓冲区溢出 | tableExists, createDB, dropDB 中的 char[256] | 中 |
-| 内嵌 sqlite3 源码 | sqlite3.c (7386 行) + 大量 MySQL 头文件 | 低 (维护负担) |
-| CppUnit 测试框架 | 过时，不如 Catch2 | 低 |
-| 无 CI/CD | 无 GitHub Actions | 低 |
-| 虚基类 + typedef 切换 | DatabaseLayer.h 中 #ifdef 选择实现 | 设计缺陷 |
-
-## 3. 设计目标
+dbpp (Database++)设计目标
 
 - C++14 标准 (嵌入式兼容，不要求 C++17)
 - RAII 管理所有数据库资源 (连接、语句、结果集)
@@ -29,9 +11,9 @@ dbpp 保留原始项目的核心设计思想（统一 SQLite3/MySQL 操作接口
 - FetchContent 管理 SQLite3 依赖 (不内嵌源码)
 - Catch2 v3 测试框架
 - GitHub Actions CI (Linux + macOS, Debug + Release, Sanitizers)
-- mccc-bus 目录结构
 
-## 4. 架构
+
+## 2. 架构
 
 ```
 dbpp/
@@ -59,21 +41,15 @@ dbpp/
   README_zh.md
 ```
 
-### 4.1 为什么不做 MySQL
-
-原始项目的 MySQL 支持依赖 libmysqlclient 头文件（内嵌了 40+ 个 MySQL 私有头文件），这些头文件版本过旧且不可移植。现代 MySQL 连接应使用 MySQL Connector/C++ 或 MariaDB Connector/C，但这会引入重量级外部依赖。
-
-dbpp 第一版只实现 SQLite3 后端。SQLite3 是嵌入式场景最常用的数据库，通过 FetchContent 可以零配置集成。MySQL 后端作为未来扩展预留接口。
-
-### 4.2 为什么不用虚基类
+### 2.1 为什么不用虚基类
 
 原始项目用虚基类 `DatabaseLayer` + `#ifdef` typedef 切换实现。这种设计既有虚函数开销，又无法在运行时切换后端。
 
 dbpp 采用具体类直接使用的方式。如果未来需要多后端，可以通过模板参数化或编译期策略模式实现，不引入虚函数。
 
-## 5. 模块设计
+## 3. 模块设计
 
-### 5.1 error.hpp -- 错误处理
+### 3.1 error.hpp -- 错误处理
 
 ```cpp
 namespace dbpp {
@@ -105,7 +81,7 @@ struct Error {
 
 不使用异常。所有可能失败的操作返回 `Error` 或通过输出参数返回。这与嵌入式 C++ 的 `-fno-exceptions` 约束兼容。
 
-### 5.2 sqlite3_db.hpp -- 数据库连接
+### 3.2 sqlite3_db.hpp -- 数据库连接
 
 ```cpp
 namespace dbpp {
@@ -166,7 +142,7 @@ class Sqlite3Db {
 }  // namespace dbpp
 ```
 
-### 5.3 sqlite3_query.hpp -- 查询结果 (前向遍历)
+### 3.3 sqlite3_query.hpp -- 查询结果 (前向遍历)
 
 ```cpp
 namespace dbpp {
@@ -219,7 +195,7 @@ class Sqlite3Query {
 }  // namespace dbpp
 ```
 
-### 5.4 sqlite3_result_set.hpp -- 结果集 (随机访问)
+### 3.4 sqlite3_result_set.hpp -- 结果集 (随机访问)
 
 ```cpp
 namespace dbpp {
@@ -262,7 +238,7 @@ class Sqlite3ResultSet {
 }  // namespace dbpp
 ```
 
-### 5.5 sqlite3_statement.hpp -- 预编译语句
+### 3.5 sqlite3_statement.hpp -- 预编译语句
 
 ```cpp
 namespace dbpp {
@@ -305,7 +281,7 @@ class Sqlite3Statement {
 }  // namespace dbpp
 ```
 
-## 6. 资源管理
+## 4. 资源管理
 
 所有类遵循 RAII:
 
@@ -318,14 +294,14 @@ class Sqlite3Statement {
 
 所有类支持移动语义，禁止拷贝。移动后源对象的指针置 nullptr。
 
-## 7. 错误处理策略
+## 5. 错误处理策略
 
 - 不使用 C++ 异常 (兼容 `-fno-exceptions`)
 - 可能失败的操作通过 `Error*` 输出参数返回错误信息
 - 简单查询方法 (GetInt/GetString 等) 返回默认值，不报错
 - `Error::ok()` 和 `operator bool()` 方便检查
 
-## 8. 依赖管理
+## 6. 依赖管理
 
 ```cmake
 # SQLite3: FetchContent 从 GitHub 拉取 amalgamation
@@ -341,49 +317,9 @@ FetchContent_Declare(Catch2
 
 SQLite3 amalgamation 编译为静态库，dbpp 头文件 include sqlite3.h。
 
-## 9. CI Workflow
 
-```yaml
-jobs:
-  build-and-test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        build_type: [Debug, Release]
 
-  sanitizers:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        sanitizer: [address, undefined]
-```
-
-## 10. 与原始 DatabaseLayer 对比
-
-| 维度 | DatabaseLayer | dbpp |
-|------|--------------|------|
-| 语言标准 | C++03 | C++14 |
-| 资源管理 | 裸 new/delete | RAII + 移动语义 |
-| 错误处理 | throw 异常 | Error 结构体 (无异常) |
-| 线程安全 | 全局 static 变量 | 零全局状态 |
-| 拷贝语义 | const_cast hack | 禁止拷贝，支持移动 |
-| 数据库后端 | SQLite3 + MySQL | SQLite3 (MySQL 预留) |
-| 依赖管理 | 内嵌源码 | FetchContent |
-| 测试框架 | CppUnit | Catch2 v3 |
-| CI | 无 | GitHub Actions |
-| 代码规范 | 无 | MISRA C++ / Google Style |
-| 缓冲区安全 | sprintf | snprintf |
-
-## 11. 命名约定
-
-- 命名空间: `dbpp`
-- 类名: PascalCase (`Sqlite3Db`, `Sqlite3Query`)
-- 方法名: PascalCase (`ExecDml`, `GetInt`)
-- 成员变量: snake_case + 下划线后缀 (`db_`, `stmt_`)
-- 常量: k 前缀 + PascalCase (`kOk`, `kError`)
-- 文件名: snake_case (`sqlite3_db.hpp`)
-
-## 12. 未来扩展
+## 7. 未来扩展
 
 - MySQL/MariaDB 后端 (通过模板参数化或独立头文件)
 - 连接池
